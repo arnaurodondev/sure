@@ -1,7 +1,26 @@
 class IbkrAccount::ActivitiesProcessor
   include IbkrAccount::DataHelpers
 
-  SUPPORTED_CASH_TRANSACTION_TYPES = [ "DEPOSITS/WITHDRAWALS", "DIVIDENDS" ].freeze
+  # Flex `CashTransaction` types, upper-cased, and the label each is booked
+  # with: fees are a Fee, interest is Interest, a payment in lieu is a
+  # Dividend. Withholding tax carries the label of the income it was withheld
+  # from (see cash_transaction_label), so dividends read net, as Trade
+  # Republic books them. Every one keeps the sign IBKR gives it, so a
+  # reversal, a refund or interest paid on margin moves cash the way it did at
+  # IBKR.
+  CASH_TRANSACTION_LABELS = {
+    "DIVIDENDS" => "Dividend",
+    "PAYMENT IN LIEU OF DIVIDENDS" => "Dividend",
+    "WITHHOLDING TAX" => "Dividend",
+    "OTHER FEES" => "Fee",
+    "COMMISSION ADJUSTMENTS" => "Fee",
+    "BROKER INTEREST RECEIVED" => "Interest",
+    "BROKER INTEREST PAID" => "Interest",
+    "BOND INTEREST RECEIVED" => "Interest",
+    "BOND INTEREST PAID" => "Interest"
+  }.freeze
+
+  SUPPORTED_CASH_TRANSACTION_TYPES = [ "DEPOSITS/WITHDRAWALS", *CASH_TRANSACTION_LABELS.keys ].freeze
 
   def initialize(ibkr_account)
     @ibkr_account = ibkr_account
@@ -227,30 +246,45 @@ class IbkrAccount::ActivitiesProcessor
 
     def supported_cash_transaction?(row)
       type = row[:type].to_s.upcase.strip
-      return false unless SUPPORTED_CASH_TRANSACTION_TYPES.include?(type)
+      unless SUPPORTED_CASH_TRANSACTION_TYPES.include?(type)
+        Rails.logger.info("IbkrAccount::ActivitiesProcessor - Skipping unsupported cash transaction type '#{row[:type]}'")
+        return false
+      end
       return false unless row[:transaction_id].present? && row[:amount].present? && row[:currency].present? && row[:report_date].present?
       return false unless fx_rate_available?(row)
 
-      type != "DIVIDENDS" || row[:conid].present?
+      type == "WITHHOLDING TAX" || CASH_TRANSACTION_LABELS[type] != "Dividend" || row[:conid].present?
     end
 
-    # supported_cash_transaction? ensures only known types reach here; no else branch needed
+    # supported_cash_transaction? ensures only known types reach here.
+    # IBKR's amount is negative for money out, Sure's is positive.
     def classify_cash_transaction(row, amount)
       type = row[:type].to_s.upcase.strip
 
       case type
       when "DEPOSITS/WITHDRAWALS"
         amount.positive? ? [ "Contribution", -amount.abs ] : [ "Withdrawal", amount.abs ]
-      when "DIVIDENDS"
-        [ "Dividend", -amount.abs ]
+      else
+        [ cash_transaction_label(row, type), -amount ]
       end
     end
 
-    def build_cash_transaction_name(row, label, security = nil)
-      return label unless label == "Dividend"
+    # Tax withheld on a security's dividend reduces that dividend; without a
+    # conid it was withheld on credit interest, and reduces the interest.
+    def cash_transaction_label(row, type)
+      return "Interest" if type == "WITHHOLDING TAX" && row[:conid].blank?
 
-      ticker = security&.ticker || security_symbol_for_conid(row[:conid]) || row[:conid]
-      "Dividend from #{ticker}"
+      CASH_TRANSACTION_LABELS[type]
+    end
+
+    def build_cash_transaction_name(row, label, security = nil)
+      type = row[:type].to_s.upcase.strip
+      return label if type == "DEPOSITS/WITHDRAWALS"
+
+      ticker = security&.ticker || security_symbol_for_conid(row[:conid])
+      return "Dividend from #{ticker || row[:conid]}" if type == "DIVIDENDS"
+
+      [ row[:type].to_s.strip, ticker ].compact.join(" for ")
     end
 
     def resolve_security_for_cash_transaction(row)
