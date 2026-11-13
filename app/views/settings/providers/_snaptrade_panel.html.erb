@@ -16,6 +16,42 @@
   %>
 
   <% if !oauth_env_configured %>
+    <%# Without an OAuth app, a SnapTrade Personal API key (the family's own %>
+    <%# clientId + consumerKey) is how this instance reads SnapTrade data. %>
+    <div class="bg-surface-inset rounded-xl p-4 space-y-3">
+      <div class="flex items-start gap-3">
+        <span class="w-9 h-9 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
+          <%= icon "key-round", class: "w-4 h-4 text-success" %>
+        </span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-primary"><%= t("providers.snaptrade.personal_key_title") %></p>
+          <p class="text-sm text-secondary"><%= t("providers.snaptrade.personal_key_description_html").html_safe %></p>
+        </div>
+      </div>
+
+      <%= styled_form_with url: personal_key_snaptrade_items_path,
+                           scope: :snaptrade_item,
+                           method: :post,
+                           data: { turbo: true },
+                           class: "space-y-3" do |form| %>
+        <%= form.text_field :client_id,
+                            label: t("providers.snaptrade.personal_key_client_id_label"),
+                            autocomplete: "off",
+                            value: nil %>
+
+        <%= form.text_field :consumer_key,
+                            label: t("providers.snaptrade.personal_key_consumer_key_label"),
+                            type: :password,
+                            autocomplete: "off",
+                            value: nil %>
+
+        <div class="flex justify-end">
+          <%= render DS::Button.new(text: t("providers.snaptrade.personal_key_save_button"), type: :submit) %>
+        </div>
+      <% end %>
+    </div>
+
+    <p class="text-sm text-secondary"><%= t("providers.snaptrade.oauth_alternative") %></p>
     <%= render "settings/providers/setup_steps",
                steps: [
                  t("providers.snaptrade.oauth_setup_step_1_html").html_safe,
@@ -72,8 +108,9 @@
         ) %>
       <% end %>
     </div>
+  <% end %>
 
-    <% if snaptrade_item&.persisted? && snaptrade_item.oauth_configured? %>
+    <% if snaptrade_item&.persisted? && snaptrade_item.credentials_configured? %>
       <div class="border-t border-primary pt-4 mt-4">
         <%# "Manage Connections" in the item menu links here with ?manage=1. %>
         <%# The row's auto-open reads and drops it, so open from the server. %>
@@ -115,5 +152,4 @@
         <% end %>
       </div>
     <% end %>
-  <% end %>
 </div>

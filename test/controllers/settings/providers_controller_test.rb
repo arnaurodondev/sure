@@ -898,6 +898,18 @@ class Settings::ProvidersControllerTest < ActionDispatch::IntegrationTest
     refute_includes response.body, I18n.t("providers.snaptrade.oauth_status_ready")
   end
 
+  test "GET connect_form for snaptrade offers the Personal API key form when instance is not configured" do
+    Provider::Snaptrade.stubs(:oauth_configured?).returns(false)
+
+    get connect_form_settings_providers_path(provider_key: "snaptrade")
+
+    assert_response :success
+    assert_select "form[action='#{personal_key_snaptrade_items_path}']" do
+      assert_select "input[name='snaptrade_item[client_id]']"
+      assert_select "input[name='snaptrade_item[consumer_key]'][type=password]"
+    end
+  end
+
   test "GET connect_form for snaptrade shows connect CTA when configured but item is not authorized" do
     sign_in users(:empty)
     Provider::Snaptrade.stubs(:oauth_configured?).returns(true)

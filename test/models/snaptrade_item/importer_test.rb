@@ -11,6 +11,14 @@ class SnaptradeItem::ImporterTest < ActiveSupport::TestCase
     @importer = SnaptradeItem::Importer.new(snaptrade_items(:configured_item), snaptrade_provider: @provider)
   end
 
+  test "a rate-limited Personal key fails the import instead of being swallowed" do
+    @provider.stubs(:list_accounts).returns([])
+    @provider.stubs(:get_positions).returns([])
+    @provider.stubs(:rate_limit_error).returns(Provider::Snaptrade::RateLimitError.new("Rate limit exceeded"))
+
+    assert_raises(Provider::Snaptrade::RateLimitError) { @importer.import }
+  end
+
   # The flag is how anything outside the job chain (the item's syncing state,
   # SnaptradeAccount::SplitSecurityRepair) sees that a fetch is on its way,
   # so the job must never be queued without it.

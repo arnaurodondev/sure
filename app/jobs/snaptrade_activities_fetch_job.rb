@@ -18,7 +18,8 @@ class SnaptradeActivitiesFetchJob < ApplicationJob
                   on_conflict: :log
 
   # Configuration for retry behavior
-  RETRY_DELAY = 10.seconds
+  # SnapTrade asks to poll an account no more than every 15 seconds.
+  RETRY_DELAY = 15.seconds
   MAX_RETRIES = 6
 
   def perform(snaptrade_account, start_date:, end_date: nil, retry_count: 0)
@@ -41,7 +42,11 @@ class SnaptradeActivitiesFetchJob < ApplicationJob
     end
 
     # Fetch activities from API
-    activities_data = fetch_activities(snaptrade_account, provider, start_date, end_date)
+    activities_data = begin
+      fetch_activities(snaptrade_account, provider, start_date, end_date)
+    rescue Provider::Snaptrade::RateLimitError
+      [] # Over the rate limit: retry on the schedule below, like "no activities yet".
+    end
 
     if activities_data.any?
       Rails.logger.info(
