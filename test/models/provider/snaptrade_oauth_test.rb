@@ -296,6 +296,32 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
     assert_equal [ 0, 500, 1000 ], requests.map { |r| r.params[:offset] }
   end
 
+  test "get_account_activities without a total stops at a short page or an empty reply" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    requests = stub_activity_pages(provider, [
+      { data: Array.new(1000) { |i| { "id" => "a#{i}" } } },
+      { data: Array.new(300) { |i| { "id" => "b#{i}" } } }
+    ])
+    assert_equal 1300, provider.get_account_activities(account_id: "acct-1")["data"].size
+    assert_equal 2, requests.size
+
+    provider = Provider::Snaptrade.new(fake_item)
+    stub_activity_pages(provider, [ { data: Array.new(1000) { |i| { "id" => "c#{i}" } } }, {} ])
+    assert_equal 1000, provider.get_account_activities(account_id: "acct-1")["data"].size
+  end
+
+  test "get_account_activities raises when a repeated page leaves rows the total reports" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    page = { data: Array.new(1000) { |i| { "id" => "a#{i}" } }, pagination: { offset: 0, limit: 1000, total: 1500 } }
+    stub_activity_pages(provider, [ page, page ])
+
+    assert_raises(Provider::Snaptrade::ApiError) { provider.get_account_activities(account_id: "acct-1") }
+  end
+
   test "get_account_activities stops at the page cap and logs it" do
     configure_oauth!
     provider = Provider::Snaptrade.new(fake_item)

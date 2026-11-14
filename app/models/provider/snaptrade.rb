@@ -407,33 +407,42 @@ class Provider::Snaptrade
 
     first_response = nil
     previous_first = nil
+    first_page_size = nil
+    known_total = nil
     activities = []
 
     MAX_ACTIVITY_PAGES.times do |page|
       response = get_json(path, params.merge(offset: activities.size))
       unless response.is_a?(Hash) && response["data"].is_a?(Array)
         return response if first_response.nil?
-        # Saving a partial history would move the sync cursor past the missing pages.
-        raise ApiError.new("SnapTrade activities page at offset #{activities.size} was not a paged response")
+        # With rows still missing, a partial history would move the sync cursor past them.
+        raise ApiError.new("SnapTrade activities page at offset #{activities.size} was not a paged response") if known_total
+        break
       end
 
       first_response ||= response
       rows = response["data"]
-      # A server that ignores offset returns the same page again: stop instead of looping to the cap.
-      break if previous_first && rows.first == previous_first
+      total = response.dig("pagination", "total")
+      known_total = total if total.is_a?(Integer)
+
+      # A server that ignores offset returns the same page again.
+      if previous_first && rows.first == previous_first
+        raise ApiError.new("SnapTrade activities repeated a page at offset #{activities.size}") if known_total && activities.size < known_total
+        break
+      end
 
       previous_first = rows.first
       activities.concat(rows)
+      first_page_size ||= rows.size
 
-      total = response.dig("pagination", "total")
-      # Without a total, keep going until an empty page: the server may return fewer rows than asked.
-      more = total.is_a?(Integer) ? activities.size < total : true
+      # Without a total, a page shorter than the first one is the last; the server may return fewer rows than asked.
+      more = known_total ? activities.size < known_total : rows.size >= first_page_size
       return first_response.merge("data" => activities) if rows.empty? || !more
 
       if page == MAX_ACTIVITY_PAGES - 1
         Rails.logger.warn(
           "Provider::Snaptrade - activities for account #{account_id} hit the page cap " \
-          "(#{MAX_ACTIVITY_PAGES} pages, #{activities.size} rows, total #{total.inspect}); remaining rows not fetched"
+          "(#{MAX_ACTIVITY_PAGES} pages, #{activities.size} rows, total #{known_total.inspect}); remaining rows not fetched"
         )
       end
     end
