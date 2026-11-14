@@ -41,11 +41,14 @@ class SnaptradeActivitiesFetchJob < ApplicationJob
       return
     end
 
-    # Fetch activities from API
+    # Fetch activities from API. Over the rate limit, retry on the schedule
+    # below like "no activities yet", but remember why for the last attempt.
+    rate_limited = false
     activities_data = begin
       fetch_activities(snaptrade_account, provider, start_date, end_date)
     rescue Provider::Snaptrade::RateLimitError
-      [] # Over the rate limit: retry on the schedule below, like "no activities yet".
+      rate_limited = true
+      []
     end
 
     if activities_data.any?
@@ -73,6 +76,25 @@ class SnaptradeActivitiesFetchJob < ApplicationJob
         end_date: end_date,
         retry_count: retry_count + 1
       )
+    elsif rate_limited
+      # Still rate limited: activities are missing, not absent, so record it
+      # for support before clearing the flag.
+      Rails.logger.error(
+        "SnaptradeActivitiesFetchJob - Max retries reached for account #{snaptrade_account.id} while rate limited"
+      )
+      DebugLogEntry.capture(
+        category: "provider_sync",
+        level: "error",
+        message: "SnapTrade activities fetch was still rate limited after #{MAX_RETRIES} retries",
+        source: self.class.name,
+        provider_key: "snaptrade",
+        family: snaptrade_item.family,
+        account_provider: snaptrade_account.account_provider,
+        metadata: { snaptrade_account_id: snaptrade_account.id, start_date: start_date.to_s, end_date: end_date.to_s }
+      )
+
+      snaptrade_account.update!(activities_fetch_pending: false)
+      snaptrade_item.broadcast_sync_complete
     else
       Rails.logger.warn(
         "SnaptradeActivitiesFetchJob - Max retries reached for account #{snaptrade_account.id}, " \
