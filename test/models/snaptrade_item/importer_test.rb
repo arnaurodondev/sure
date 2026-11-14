@@ -32,6 +32,14 @@ class SnaptradeItem::ImporterTest < ActiveSupport::TestCase
     assert @snaptrade_account.reload.activities_fetch_pending?
   end
 
+  test "the first background fetch waits the same 15 seconds as its retries" do
+    freeze_time do
+      assert_enqueued_with(job: SnaptradeActivitiesFetchJob, at: SnaptradeActivitiesFetchJob::RETRY_DELAY.from_now) do
+        @importer.send(:import_activities, @snaptrade_account)
+      end
+    end
+  end
+
   test "no background fetch is queued when the pending flag cannot be set" do
     @snaptrade_account.stubs(:update!).with(activities_fetch_pending: true).raises(ActiveRecord::ActiveRecordError, "boom")
 

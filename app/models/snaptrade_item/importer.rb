@@ -217,7 +217,7 @@ class SnaptradeItem::Importer
           # cleared here. Active Job raises some enqueue failures and reports
           # an adapter's EnqueueError by returning false.
           begin
-            queued = SnaptradeActivitiesFetchJob.set(wait: 10.seconds).perform_later(
+            queued = SnaptradeActivitiesFetchJob.set(wait: SnaptradeActivitiesFetchJob::RETRY_DELAY).perform_later(
               snaptrade_account,
               start_date: start_date
             )
