@@ -99,7 +99,10 @@
     <% end %>
   <% end %>
 
-    <% if snaptrade_item&.persisted? && snaptrade_item.credentials_configured? %>
+    <%# An OAuth token needs the instance's OAuth app to keep working, so it only %>
+    <%# lists connections while that app is configured. A Personal key carries %>
+    <%# its own credentials and lists them either way. %>
+    <% if snaptrade_item&.persisted? && (snaptrade_item.personal_key_configured? || (oauth_env_configured && snaptrade_item.oauth_configured?)) %>
       <div class="border-t border-primary pt-4 mt-4">
         <%# "Manage Connections" in the item menu links here with ?manage=1. %>
         <%# The row's auto-open reads and drops it, so open from the server. %>

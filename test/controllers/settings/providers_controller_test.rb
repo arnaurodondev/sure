@@ -898,6 +898,20 @@ class Settings::ProvidersControllerTest < ActionDispatch::IntegrationTest
     refute_includes response.body, I18n.t("providers.snaptrade.oauth_status_ready")
   end
 
+  test "GET index lists SnapTrade connections for an OAuth item only while the OAuth app is configured" do
+    item = snaptrade_items(:configured_item)
+
+    Provider::Snaptrade.stubs(:oauth_configured?).returns(false)
+    get settings_providers_path(manage: 1)
+    assert_response :success
+    refute_includes response.body, connections_snaptrade_item_path(item)
+
+    Provider::Snaptrade.stubs(:oauth_configured?).returns(true)
+    get settings_providers_path(manage: 1)
+    assert_response :success
+    assert_includes response.body, connections_snaptrade_item_path(item)
+  end
+
   test "GET connect_form for snaptrade offers the Personal API key form when instance is not configured" do
     Provider::Snaptrade.stubs(:oauth_configured?).returns(false)
 
