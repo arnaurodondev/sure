@@ -322,12 +322,56 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
     assert_raises(Provider::Snaptrade::ApiError) { provider.get_account_activities(account_id: "acct-1") }
   end
 
-  test "get_account_activities stops at the page cap and logs it" do
+  test "get_account_activities raises when an empty page leaves rows the total reports" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    stub_activity_pages(provider, [
+      { data: Array.new(1000) { |i| { "id" => "a#{i}" } }, pagination: { offset: 0, limit: 1000, total: 1500 } },
+      { data: [], pagination: { offset: 1000, limit: 1000, total: 1500 } }
+    ])
+
+    assert_difference -> { DebugLogEntry.where(provider_key: "snaptrade").count }, 1 do
+      assert_raises(Provider::Snaptrade::ApiError) { provider.get_account_activities(account_id: "acct-1") }
+    end
+  end
+
+  test "get_account_activities returns an empty account whose total is zero" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    stub_activity_pages(provider, [ { data: [], pagination: { offset: 0, limit: 1000, total: 0 } } ])
+
+    assert_equal [], provider.get_account_activities(account_id: "acct-1")["data"]
+  end
+
+  test "get_account_activities raises at the page cap while the total reports more rows" do
     configure_oauth!
     provider = Provider::Snaptrade.new(fake_item)
 
     pages = Array.new(3) do |page|
       { data: Array.new(2) { |i| { "id" => "p#{page}-#{i}" } }, pagination: { offset: page * 2, limit: 2, total: 100 } }
+    end
+    requests = stub_activity_pages(provider, pages)
+
+    assert_difference -> { DebugLogEntry.where(provider_key: "snaptrade").count }, 1 do
+      assert_raises(Provider::Snaptrade::ApiError) do
+        stub_const(Provider::Snaptrade, :ACTIVITIES_PAGE_SIZE, 2) do
+          stub_const(Provider::Snaptrade, :MAX_ACTIVITY_PAGES, 3) do
+            provider.get_account_activities(account_id: "acct-1")
+          end
+        end
+      end
+    end
+    assert_equal 3, requests.size
+  end
+
+  test "get_account_activities without a total stops at the page cap and logs it" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    pages = Array.new(3) do |page|
+      { data: Array.new(2) { |i| { "id" => "p#{page}-#{i}" } } }
     end
     requests = stub_activity_pages(provider, pages)
     Rails.logger.expects(:warn).with(regexp_matches(/page cap/))

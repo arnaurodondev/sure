@@ -416,7 +416,7 @@ class Provider::Snaptrade
       unless response.is_a?(Hash) && response["data"].is_a?(Array)
         return response if first_response.nil?
         # With rows still missing, a partial history would move the sync cursor past them.
-        raise ApiError.new("SnapTrade activities page at offset #{activities.size} was not a paged response") if known_total
+        raise incomplete_activities_error(account_id, "SnapTrade activities page at offset #{activities.size} was not a paged response") if known_total
         break
       end
 
@@ -427,7 +427,7 @@ class Provider::Snaptrade
 
       # A server that ignores offset returns the same page again.
       if previous_first && rows.first == previous_first
-        raise ApiError.new("SnapTrade activities repeated a page at offset #{activities.size}") if known_total && activities.size < known_total
+        raise incomplete_activities_error(account_id, "SnapTrade activities repeated a page at offset #{activities.size}") if known_total && activities.size < known_total
         break
       end
 
@@ -437,13 +437,14 @@ class Provider::Snaptrade
 
       # Without a total, a page shorter than the first one is the last; the server may return fewer rows than asked.
       more = known_total ? activities.size < known_total : rows.size >= first_page_size
+      raise incomplete_activities_error(account_id, "SnapTrade activities page at offset #{activities.size} was empty, total #{known_total}") if rows.empty? && more && page.positive?
       return first_response.merge("data" => activities) if rows.empty? || !more
 
       if page == MAX_ACTIVITY_PAGES - 1
-        Rails.logger.warn(
-          "Provider::Snaptrade - activities for account #{account_id} hit the page cap " \
-          "(#{MAX_ACTIVITY_PAGES} pages, #{activities.size} rows, total #{known_total.inspect}); remaining rows not fetched"
-        )
+        message = "SnapTrade activities for account #{account_id} hit the page cap " \
+          "(#{MAX_ACTIVITY_PAGES} pages, #{activities.size} rows, total #{known_total.inspect})"
+        raise incomplete_activities_error(account_id, message) if known_total
+        Rails.logger.warn("Provider::Snaptrade - #{message}; remaining rows not fetched")
       end
     end
 
@@ -574,6 +575,21 @@ class Provider::Snaptrade
         metadata: { snaptrade_item_id: snaptrade_item.try(:id) }
       )
       raise
+    end
+
+    # Captured for support: the importer keeps the stored history and cursor
+    # when the fetch fails, but would otherwise only log why.
+    def incomplete_activities_error(account_id, message)
+      DebugLogEntry.capture(
+        category: "provider_sync",
+        level: :error,
+        message: message,
+        source: "Provider::Snaptrade",
+        provider_key: "snaptrade",
+        family: snaptrade_item.try(:family),
+        metadata: { snaptrade_item_id: snaptrade_item.try(:id), snaptrade_account_id: account_id }
+      )
+      ApiError.new(message)
     end
 
     def mark_requires_update!
