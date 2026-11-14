@@ -48,7 +48,7 @@ class Provider::SnaptradeAdapter < Provider::Base
     # Personal-key item can be used.
     items = family.snaptrade_items.syncable
     items = items.where(oauth_token_type: SnaptradeItem::PERSONAL_KEY_TOKEN_TYPE) unless Provider::Snaptrade.oauth_configured?
-    snaptrade_item = items.first
+    snaptrade_item = items.ordered.first
     return nil unless snaptrade_item
 
     Provider::Snaptrade.new(snaptrade_item)

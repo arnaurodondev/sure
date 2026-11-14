@@ -926,6 +926,19 @@ class Settings::ProvidersControllerTest < ActionDispatch::IntegrationTest
     refute_includes response.body, I18n.t("providers.snaptrade.oauth_reauthorize_button")
   end
 
+  test "GET connect_form for snaptrade shows a Personal-key item as syncing when an OAuth app is configured later" do
+    sign_in users(:empty)
+    Provider::Snaptrade.stubs(:oauth_configured?).returns(true)
+    Provider::Snaptrade.stubs(:authorization_code_configured?).returns(false)
+    users(:empty).family.snaptrade_items.create!(name: "SnapTrade").apply_personal_key!(client_id: "c", consumer_key: "k")
+
+    get connect_form_settings_providers_path(provider_key: "snaptrade")
+
+    assert_response :success
+    assert_includes response.body, I18n.t("providers.snaptrade.oauth_status_personal_key")
+    refute_includes response.body, I18n.t("providers.snaptrade.oauth_status_ready_device")
+  end
+
   test "GET connect_form for snaptrade offers only the device code without a confidential client" do
     sign_in users(:empty)
     Provider::Snaptrade.stubs(:oauth_configured?).returns(true)

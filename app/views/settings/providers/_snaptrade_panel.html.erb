@@ -57,6 +57,8 @@
     <%
       oauth_status = if oauth_active
         t("providers.snaptrade.oauth_status_authorized")
+      elsif snaptrade_item&.personal_key_configured?
+        t("providers.snaptrade.oauth_status_personal_key")
       elsif redirect_flow_available
         t("providers.snaptrade.oauth_status_ready")
       else

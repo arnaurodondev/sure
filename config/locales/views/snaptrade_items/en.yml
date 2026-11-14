@@ -158,6 +158,7 @@ en:
       oauth_status_ready: "Authorize Sure to read your SnapTrade account data."
       oauth_status_ready_device: "Authorize Sure with a device code to read your SnapTrade account data."
       oauth_status_authorized: "Authorized with SnapTrade."
+      oauth_status_personal_key: "Syncing with your SnapTrade Personal API key. Authorizing with OAuth switches this connection to OAuth."
       oauth_connect_button: "Connect with SnapTrade"
       oauth_device_button: "Use a device code"
       oauth_reauthorize_button: "Reauthorize"

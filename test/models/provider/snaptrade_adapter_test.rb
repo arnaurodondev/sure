@@ -44,4 +44,16 @@ class Provider::SnaptradeAdapterTest < ActiveSupport::TestCase
     assert_instance_of Provider::Snaptrade, provider
     assert_equal item, provider.snaptrade_item
   end
+
+  test "build_provider picks the newest Personal-key item, as the settings controller does" do
+    Provider::Snaptrade.stubs(:oauth_configured?).returns(false)
+    family = families(:dylan_family)
+    older = snaptrade_items(:configured_item)
+    older.update!(created_at: 2.days.ago)
+    older.apply_personal_key!(client_id: "old-client", consumer_key: "old-key")
+    newer = family.snaptrade_items.create!(name: "Newer")
+    newer.apply_personal_key!(client_id: "new-client", consumer_key: "new-key")
+
+    assert_equal newer, Provider::SnaptradeAdapter.build_provider(family: family).snaptrade_item
+  end
 end
