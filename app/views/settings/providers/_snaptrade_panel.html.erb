@@ -8,7 +8,10 @@
 
   <%
     items = local_assigns[:snaptrade_items] || @snaptrade_items || Current.family.snaptrade_items.active.ordered
-    snaptrade_item = items.reject(&:scheduled_for_deletion?).first
+    # Same item SnaptradeItemsController#current_snaptrade_item acts on: the
+    # newest authorized one, else the newest.
+    active_items = items.reject(&:scheduled_for_deletion?)
+    snaptrade_item = active_items.find(&:credentials_configured?) || active_items.first
     oauth_env_configured = Provider::Snaptrade.oauth_configured?
     redirect_flow_available = Provider::Snaptrade.authorization_code_configured?
     oauth_active = snaptrade_item&.oauth_token_active?

@@ -573,6 +573,19 @@ class SnaptradeItemsControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "personal_key re-renders the panel for the item it saved the key on" do
+    @user.family.snaptrade_items.create!(name: "Newer, never authorized", created_at: 1.minute.from_now)
+
+    with_snaptrade_oauth(nil, nil) do
+      post personal_key_snaptrade_items_url,
+           params: { snaptrade_item: { client_id: "PERSONAL", consumer_key: "pk" } }, as: :turbo_stream
+    end
+
+    assert_response :success
+    assert @snaptrade_item.reload.personal_key_configured?
+    assert_includes response.body, connections_snaptrade_item_path(@snaptrade_item)
+  end
+
   test "personal_key is refused when an OAuth app is configured" do
     sign_out
     sign_in @user = users(:empty)
