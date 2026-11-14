@@ -69,6 +69,17 @@ class HoldingTest < ActiveSupport::TestCase
     assert_in_delta 100, eur.weight, 0.001
   end
 
+  test "a holding with no exchange rate does not shrink the other holdings' weights" do
+    # Only a provider snapshot lists holdings in other currencies.
+    provider = AccountProvider.create!(account: @account, provider: plaid_accounts(:one))
+    @account.holdings.update_all(account_provider_id: provider.id)
+    @account.holdings.create!(security: Security.create!(ticker: "7203", name: "Toyota"), date: Date.current, qty: 1, price: 1_000_000, amount: 1_000_000,
+                              currency: "JPY", account_provider_id: provider.id)
+    @account.update!(balance: 7000, cash_balance: 40)
+
+    assert_in_delta 3240.0 / 7000 * 100, @amzn.weight, 0.001
+  end
+
   test "calculates average cost basis" do
     create_trade(@amzn.security, account: @account, qty: 10, price: 212.00, date: 1.day.ago.to_date)
     create_trade(@amzn.security, account: @account, qty: 15, price: 216.00, date: Date.current)

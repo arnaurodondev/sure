@@ -824,7 +824,8 @@ class Account < ApplicationRecord
   end
 
   def current_holdings_total
-    @current_holdings_total ||= current_holdings.sum(&:amount_in_account_currency)
+    # A holding with no exchange rate is left out rather than counted 1:1.
+    @current_holdings_total ||= current_holdings.sum { |h| h.amount_in_account_currency(unconvertible: 0) }
   end
 
   def current_holdings

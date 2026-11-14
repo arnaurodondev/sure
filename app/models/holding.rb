@@ -392,12 +392,12 @@ class Holding < ApplicationRecord
       remove_instance_variable(:@day_change) if defined?(@day_change)
     end
 
-    def amount_in_account_currency
+    def amount_in_account_currency(unconvertible: amount)
       return amount if currency == account.currency
 
       Money.new(amount, currency).exchange_to(account.currency, date: date).amount
     rescue Money::ConversionError
-      amount
+      unconvertible
     end
     public :amount_in_account_currency
 
