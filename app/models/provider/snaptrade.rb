@@ -67,6 +67,12 @@ class Provider::Snaptrade
   # equity-like kinds added later still import rather than being dropped.
   UNSUPPORTED_INSTRUMENT_KINDS = %w[option future cfd].freeze
 
+  # GET /accounts/{id}/activities returns at most 1000 rows per request.
+  ACTIVITIES_PAGE_SIZE = 1000
+  # Safety cap on activity pages per account (100k rows), so a server that
+  # ignores offset can't loop forever.
+  MAX_ACTIVITY_PAGES = 100
+
   class << self
     # Some OAuth flow is available. The device flow needs nothing but the public
     # client id, so this is what gates syncing and the provider panel; only the
@@ -388,12 +394,41 @@ class Provider::Snaptrade
     results.reject { |position| unsupported_instrument?(position) }
   end
 
-  # Returns raw JSON: paginated form is {"data" => [...]}, may also be a plain Array
+  # Returns raw JSON: paginated form is {"data" => [...]}, may also be a plain Array.
+  #
+  # The endpoint returns at most ACTIVITIES_PAGE_SIZE rows per request, so this
+  # walks offset/limit until every page is fetched and returns the first page's
+  # body with "data" holding all of them.
   def get_account_activities(account_id:, start_date: nil, end_date: nil)
-    params = {}
+    params = { limit: ACTIVITIES_PAGE_SIZE }
     params[:startDate] = start_date.to_date.to_s if start_date
     params[:endDate] = end_date.to_date.to_s if end_date
-    get_json("/api/v1/accounts/#{account_id}/activities", params)
+    path = "/api/v1/accounts/#{account_id}/activities"
+
+    first_response = nil
+    activities = []
+
+    MAX_ACTIVITY_PAGES.times do |page|
+      response = get_json(path, params.merge(offset: activities.size))
+      return response unless response.is_a?(Hash) && response["data"].is_a?(Array)
+
+      first_response ||= response
+      rows = response["data"]
+      activities.concat(rows)
+
+      total = response.dig("pagination", "total")
+      more = total.is_a?(Integer) ? activities.size < total : rows.size >= ACTIVITIES_PAGE_SIZE
+      return first_response.merge("data" => activities) if rows.empty? || !more
+
+      if page == MAX_ACTIVITY_PAGES - 1
+        Rails.logger.warn(
+          "Provider::Snaptrade - activities for account #{account_id} hit the page cap " \
+          "(#{MAX_ACTIVITY_PAGES} pages, #{activities.size} rows, total #{total.inspect}); remaining rows not fetched"
+        )
+      end
+    end
+
+    first_response.merge("data" => activities)
   end
 
   # Cross-account activities endpoint. Returns Array<Hash>.

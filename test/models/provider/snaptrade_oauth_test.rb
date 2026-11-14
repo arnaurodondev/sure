@@ -55,6 +55,27 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
     }.to_json
   end
 
+  # Each GET to the activities endpoint yields its own request and returns the
+  # next page body. Returns the yielded requests so tests can inspect params.
+  def stub_activity_pages(provider, pages)
+    requests = []
+    connection = mock("faraday")
+    pages.each do |page|
+      request = OpenStruct.new(headers: {}, params: {})
+      requests << request
+      connection.expects(:get)
+        .with("#{Provider::Snaptrade::API_BASE_URL}/api/v1/accounts/acct-1/activities")
+        .yields(request).returns(faraday_response(status: 200, body: page.to_json))
+        .in_sequence(activity_sequence)
+    end
+    provider.stubs(:api_connection).returns(connection)
+    requests
+  end
+
+  def activity_sequence
+    @activity_sequence ||= sequence("activity pages")
+  end
+
   def faraday_response(status:, body:)
     OpenStruct.new(status: status, body: body, success?: (200..299).cover?(status))
   end
@@ -203,6 +224,59 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
       provider.get_positions(account_id: "acct-1")
     end
     assert_match "no results array", error.message
+  end
+
+  test "get_account_activities follows offset pagination until every page is fetched" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    first_page = Array.new(1000) { |i| { "id" => "a#{i}" } }
+    second_page = [ { "id" => "a1000" }, { "id" => "a1001" } ]
+    requests = stub_activity_pages(provider, [
+      { data: first_page, pagination: { offset: 0, limit: 1000, total: 1002 } },
+      { data: second_page, pagination: { offset: 1000, limit: 1000, total: 1002 } }
+    ])
+
+    response = provider.get_account_activities(account_id: "acct-1", start_date: Date.new(2024, 1, 1))
+
+    assert_equal 1002, response["data"].size
+    assert_equal %w[a0 a1001], [ response["data"].first["id"], response["data"].last["id"] ]
+    assert_equal [ 0, 1000 ], requests.map { |r| r.params[:offset] }
+    assert requests.all? { |r| r.params[:limit] == 1000 && r.params[:startDate] == "2024-01-01" }
+  end
+
+  test "get_account_activities makes a single request when one page holds everything" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    requests = stub_activity_pages(provider, [
+      { data: [ { "id" => "a0" }, { "id" => "a1" } ], pagination: { offset: 0, limit: 1000, total: 2 } }
+    ])
+
+    response = provider.get_account_activities(account_id: "acct-1")
+
+    assert_equal %w[a0 a1], response["data"].map { |a| a["id"] }
+    assert_equal 1, requests.size
+  end
+
+  test "get_account_activities stops at the page cap and logs it" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    pages = Array.new(3) do |page|
+      { data: Array.new(2) { |i| { "id" => "p#{page}-#{i}" } }, pagination: { offset: page * 2, limit: 2, total: 100 } }
+    end
+    requests = stub_activity_pages(provider, pages)
+    Rails.logger.expects(:warn).with(regexp_matches(/page cap/))
+
+    response = stub_const(Provider::Snaptrade, :ACTIVITIES_PAGE_SIZE, 2) do
+      stub_const(Provider::Snaptrade, :MAX_ACTIVITY_PAGES, 3) do
+        provider.get_account_activities(account_id: "acct-1")
+      end
+    end
+
+    assert_equal 3, requests.size
+    assert_equal 6, response["data"].size
   end
 
   test "get_positions filters out instrument kinds the holdings pipeline cannot model" do
