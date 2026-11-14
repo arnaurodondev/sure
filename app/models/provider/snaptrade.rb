@@ -410,14 +410,18 @@ class Provider::Snaptrade
 
     MAX_ACTIVITY_PAGES.times do |page|
       response = get_json(path, params.merge(offset: activities.size))
-      return response unless response.is_a?(Hash) && response["data"].is_a?(Array)
+      unless response.is_a?(Hash) && response["data"].is_a?(Array)
+        return response if first_response.nil?
+        break # an unexpected later page: keep the pages already fetched
+      end
 
       first_response ||= response
       rows = response["data"]
       activities.concat(rows)
 
       total = response.dig("pagination", "total")
-      more = total.is_a?(Integer) ? activities.size < total : rows.size >= ACTIVITIES_PAGE_SIZE
+      # Without a total, keep going until an empty page: the server may return fewer rows than asked.
+      more = total.is_a?(Integer) ? activities.size < total : true
       return first_response.merge("data" => activities) if rows.empty? || !more
 
       if page == MAX_ACTIVITY_PAGES - 1

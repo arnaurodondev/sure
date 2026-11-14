@@ -259,6 +259,32 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
     assert_equal 1, requests.size
   end
 
+  test "get_account_activities keeps earlier pages when a later page is not a paged body" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    stub_activity_pages(provider, [
+      { data: Array.new(1000) { |i| { "id" => "a#{i}" } }, pagination: { offset: 0, limit: 1000, total: 1500 } },
+      [ { "id" => "b0" } ]
+    ])
+
+    assert_equal 1000, provider.get_account_activities(account_id: "acct-1")["data"].size
+  end
+
+  test "get_account_activities without a total pages until an empty page" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    requests = stub_activity_pages(provider, [
+      { data: Array.new(500) { |i| { "id" => "a#{i}" } } },
+      { data: Array.new(500) { |i| { "id" => "b#{i}" } } },
+      { data: [] }
+    ])
+
+    assert_equal 1000, provider.get_account_activities(account_id: "acct-1")["data"].size
+    assert_equal [ 0, 500, 1000 ], requests.map { |r| r.params[:offset] }
+  end
+
   test "get_account_activities stops at the page cap and logs it" do
     configure_oauth!
     provider = Provider::Snaptrade.new(fake_item)
