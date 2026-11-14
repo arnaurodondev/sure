@@ -45,7 +45,8 @@ class Holding < ApplicationRecord
     # Never divide by less than the holdings (this one included), so negative
     # cash cannot push a weight past 100%. As InvestmentStatement#weight_denominator.
     value = amount_in_account_currency
-    value / [ account.balance, account.current_holdings_total, value ].max * 100
+    denominator = [ account.balance, account.current_holdings_total, value ].max
+    denominator.positive? ? value / denominator * 100 : 1
   end
 
   # The stored per-share cost when it is a real value:

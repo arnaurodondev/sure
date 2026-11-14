@@ -841,4 +841,13 @@ class HoldingTest < ActiveSupport::TestCase
 
         assert_not_nil holding.avg_cost
       end
+
+    test "weight stays finite for a short holding when the balance and holdings are not positive" do
+      account = families(:empty).accounts.create!(name: "Short only", balance: 0, cash_balance: 0, currency: "USD", accountable: Investment.new)
+      holding = account.holdings.create!(security: Security.create!(ticker: "SHRT", name: "Short"), date: Date.current,
+                                         qty: 1, price: 1, amount: 1, currency: "USD")
+      holding.update_columns(qty: -1, price: 500, amount: -500)
+
+      assert_equal 1, holding.reload.weight
+    end
 end
