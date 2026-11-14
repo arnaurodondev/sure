@@ -1019,6 +1019,65 @@ class IncomeStatementTest < ActiveSupport::TestCase
     assert_equal 1, totals_query_calls
   end
 
+  # The nearest stored rate stands in for a missing day only within
+  # ExchangeRate::FALLBACK_MAX_AGE_DAYS. A CHF expense whose only CHF rate is
+  # three years older converted at that rate, $300, with no note.
+  test "an expense whose only rate is years older is left out" do
+    Entry.joins(:account).where(accounts: { family_id: @family.id }).destroy_all
+    travel_to Date.new(2026, 11, 14) do
+      ExchangeRate.stubs(:provider).returns(nil)
+      ExchangeRate.where(from_currency: "CHF", to_currency: "USD").delete_all
+      ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.new(2023, 11, 10), rate: 3.0)
+      create_transaction(account: @checking_account, amount: 100, currency: "CHF", category: @groceries_category,
+                         date: Date.new(2026, 11, 10))
+
+      totals = IncomeStatement.new(@family).expense_totals(period: Period.custom(start_date: Date.new(2026, 11, 1), end_date: Date.new(2026, 11, 14)))
+
+      assert_equal 0, totals.total, "the CHF expense converted at the 2023 rate"
+      assert_includes @family.currencies_without_exchange_rate, "CHF"
+    end
+  end
+
+  # A gap in the history: rates on 2020-01-01 and 2026-11-13 only. A 2024
+  # expense took the 2020 rate, and the note stayed quiet because the newest
+  # rate is current.
+  test "an expense in a gap between rates years apart is left out" do
+    Entry.joins(:account).where(accounts: { family_id: @family.id }).destroy_all
+    travel_to Date.new(2026, 11, 14) do
+      ExchangeRate.stubs(:provider).returns(nil)
+      ExchangeRate.where(from_currency: "CHF", to_currency: "USD").delete_all
+      chf = @family.accounts.create! name: "CHF Checking", currency: "CHF", balance: 0, accountable: Depository.new
+      ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.new(2020, 1, 1), rate: 3.0)
+      ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.new(2026, 11, 13), rate: 1.1)
+      create_transaction(account: chf, amount: 100, currency: "CHF", category: @groceries_category,
+                         date: Date.new(2024, 6, 1))
+
+      totals = IncomeStatement.new(@family).expense_totals(period: Period.custom(start_date: Date.new(2024, 6, 1), end_date: Date.new(2024, 6, 30)))
+
+      assert_equal 0, totals.total, "the 2024 expense converted at the 2020 rate"
+      assert_includes @family.currencies_without_exchange_rate, "CHF"
+      assert_empty @family.stale_exchange_rate_dates
+    end
+  end
+
+  # Within the limit the nearest rate still converts, as #3983 intends.
+  test "an expense converts at a rate within the fallback limit" do
+    Entry.joins(:account).where(accounts: { family_id: @family.id }).destroy_all
+    travel_to Date.new(2026, 11, 14) do
+      ExchangeRate.stubs(:provider).returns(nil)
+      ExchangeRate.where(from_currency: "CHF", to_currency: "USD").delete_all
+      ExchangeRate.create!(from_currency: "CHF", to_currency: "USD",
+                           date: Date.new(2026, 11, 10) - ExchangeRate::FALLBACK_MAX_AGE_DAYS, rate: 1.2)
+      create_transaction(account: @checking_account, amount: 100, currency: "CHF", category: @groceries_category,
+                         date: Date.new(2026, 11, 10))
+
+      totals = IncomeStatement.new(@family).expense_totals(period: Period.custom(start_date: Date.new(2026, 11, 1), end_date: Date.new(2026, 11, 14)))
+
+      assert_equal 120, totals.total
+      assert_not_includes @family.currencies_without_exchange_rate, "CHF"
+    end
+  end
+
   private
     # Adds a 250 grocery expense whose pending flag is +flag+ and asserts every
     # figure is the one without it: totals (Transaction.excluding_pending), the

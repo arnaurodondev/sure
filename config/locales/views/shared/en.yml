@@ -7,8 +7,8 @@ en:
     preview: Preview
     exchange_rate_notes:
       missing:
-        one: "No exchange rate from %{currencies} to %{currency} is stored yet, so some totals may leave out amounts in %{currencies}."
-        other: "No exchange rates from %{currencies} to %{currency} are stored yet, so some totals may leave out amounts in those currencies."
+        one: "No exchange rate from %{currencies} to %{currency} is stored for some or all dates, so some totals may leave out amounts in %{currencies}."
+        other: "No exchange rates from %{currencies} to %{currency} are stored for some or all dates, so some totals may leave out amounts in those currencies."
       stale:
         one: "The latest exchange rate to %{currency} is out of date: %{rates}. Today's totals use it."
         other: "The latest exchange rates to %{currency} are out of date: %{rates}. Today's totals use them."

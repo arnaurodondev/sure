@@ -11,6 +11,12 @@ module ExchangeRate::Provided
     # Maximum number of days to look back for a cached rate before calling the provider.
     NEAREST_RATE_LOOKBACK_DAYS = 5
 
+    # Furthest a stored rate may be from the date #rate_sql converts on, before
+    # or after, and still stand in for that day's rate. Beyond it the amount is
+    # left out and the note names its currency, rather than converting at a
+    # rate from years before (or after) without saying so.
+    FALLBACK_MAX_AGE_DAYS = 90
+
     # A stored rate of zero or below is skipped, as everywhere else (see
     # #usable_rates), so the provider is still asked; its answer replaces the
     # unusable row rather than leaving it to be skipped on every request.
@@ -142,20 +148,32 @@ module ExchangeRate::Provided
 
     # SQL for the rate that converts `from` into `to` on `on`, by the same rule
     # as #rates_for without the provider: 1 for the same currency, else the
-    # latest stored rate on or before the day, else the earliest after it, else
-    # NULL. Amounts multiplied by a NULL rate drop out of a SUM, which is the
-    # point: an amount with no rate is left out, never counted at parity.
+    # latest stored rate on or before the day, else the earliest after it, each
+    # at most FALLBACK_MAX_AGE_DAYS away, else NULL. Amounts multiplied by a
+    # NULL rate drop out of a SUM, which is the point: an amount with no rate
+    # is left out, never counted at parity. For a future day, which no rate can
+    # be stored for yet, the limit is counted back from today instead, so a
+    # scheduled entry converts at the latest rate while that rate is recent.
+    #
+    # Pass `bounded: false` to convert a balance rather than an entry: like
+    # #rates_for, it then takes the nearest stored rate however old, so a
+    # figure built on balances agrees with net worth and the chart.
     #
     # Arguments are SQL expressions, so a caller passes column names or named
     # binds (`:target_currency`), not values.
-    def rate_sql(from:, to:, on:)
+    def rate_sql(from:, to:, on:, bounded: true)
+      day = "CAST(#{on} AS date)"
+      before = bounded ? "AND fx.date >= #{fallback_floor_sql(day)}" : ""
+      after = bounded ? "AND fx.date <= #{day} + #{FALLBACK_MAX_AGE_DAYS}" : ""
       <<~SQL.squish
         CASE WHEN #{from} = #{to} THEN 1 ELSE COALESCE(
           (SELECT fx.rate FROM exchange_rates fx
-            WHERE fx.from_currency = #{from} AND fx.to_currency = #{to} AND fx.date <= #{on} AND fx.rate > 0
+            WHERE fx.from_currency = #{from} AND fx.to_currency = #{to} AND fx.date <= #{on}
+              #{before} AND fx.rate > 0
             ORDER BY fx.date DESC LIMIT 1),
           (SELECT fx.rate FROM exchange_rates fx
-            WHERE fx.from_currency = #{from} AND fx.to_currency = #{to} AND fx.date > #{on} AND fx.rate > 0
+            WHERE fx.from_currency = #{from} AND fx.to_currency = #{to} AND fx.date > #{on}
+              #{after} AND fx.rate > 0
             ORDER BY fx.date ASC LIMIT 1)
         ) END
       SQL
@@ -169,6 +187,21 @@ module ExchangeRate::Provided
       return [] if candidates.empty?
 
       candidates - usable_rates.where(from_currency: candidates, to_currency: to).distinct.pluck(:from_currency)
+    end
+
+    # Currencies of `entries` with a transaction or trade that #rate_sql leaves
+    # out for want of a stored rate into `to` within its limits, though the
+    # currency may have rates on other dates. Excluded entries are not counted.
+    def entry_currencies_without_rate(entries, to:)
+      entries.where(entryable_type: %w[Transaction Trade], excluded: false)
+        .where.not(currency: to)
+        .where(<<~SQL.squish, to: to).distinct.pluck(:currency)
+          NOT EXISTS (
+            SELECT 1 FROM exchange_rates fx
+            WHERE fx.from_currency = entries.currency AND fx.to_currency = :to AND fx.rate > 0
+              AND fx.date BETWEEN #{fallback_floor_sql("entries.date")} AND entries.date + #{FALLBACK_MAX_AGE_DAYS}
+          )
+        SQL
     end
 
     # Of `currencies`, those whose newest stored rate into `to` is older than
@@ -228,6 +261,12 @@ module ExchangeRate::Provided
     end
 
     private
+      # Earliest stored rate #rate_sql takes for `day`: FALLBACK_MAX_AGE_DAYS
+      # before it, or before today when `day` is in the future.
+      def fallback_floor_sql(day)
+        "LEAST(#{day}, CAST(#{connection.quote(Date.current)} AS date)) - #{FALLBACK_MAX_AGE_DAYS}"
+      end
+
       # Rows a conversion may use. ExchangeRate validates presence only, so a
       # provider or an import can leave a 0 behind.
       def usable_rates

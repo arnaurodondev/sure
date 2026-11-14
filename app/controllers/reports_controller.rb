@@ -383,8 +383,9 @@ class ReportsController < ApplicationController
     end
 
     # An entry's amount in family currency at the rate the summary totals use:
-    # ExchangeRate.rate_sql, the stored rate nearest the entry's date, however
-    # old, as IncomeStatement::ScopedTransactionsQuery reads it. Nil when there
+    # ExchangeRate.rate_sql, the stored rate nearest the entry's date within
+    # ExchangeRate::FALLBACK_MAX_AGE_DAYS, as
+    # IncomeStatement::ScopedTransactionsQuery reads it. Nil when there
     # is none, so the entry is left out, as the summary leaves it out, rather
     # than counted at 1. No provider is called.
     def report_amount_converter(family_currency)

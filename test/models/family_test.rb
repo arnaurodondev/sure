@@ -3,6 +3,7 @@ require "test_helper"
 class FamilyTest < ActiveSupport::TestCase
   include SyncableInterfaceTest
   include SqlQueryCapture
+  include EntriesTestHelper
 
   def setup
     @syncable = families(:dylan_family)
@@ -870,6 +871,58 @@ class FamilyTest < ActiveSupport::TestCase
                             entryable: Trade.new(security: security, qty: 1, price: 1000, currency: "SEK"))
 
     assert_equal %w[SEK], family.currencies_without_exchange_rate
+  end
+
+  # Only transactions and trades that totals convert at their own date count
+  # toward a rate missing near an entry's date.
+  test "currencies_without_exchange_rate ignores an old valuation" do
+    family = families(:empty)
+    chf = family.accounts.create!(name: "CHF", balance: 1_000, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: family.currency, date: Date.current, rate: 1.1)
+    create_valuation(account: chf, currency: "CHF", amount: 1_000, date: 3.years.ago.to_date, kind: "opening_anchor")
+
+    assert_not_includes family.currencies_without_exchange_rate, "CHF"
+  end
+
+  test "currencies_without_exchange_rate ignores a scheduled entry beyond the fallback limit" do
+    family = families(:empty)
+    chf = family.accounts.create!(name: "CHF", balance: 1_000, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: family.currency, date: Date.current, rate: 1.1)
+    create_transaction(account: chf, currency: "CHF", amount: 50, date: Date.current + 120)
+
+    assert_not_includes family.currencies_without_exchange_rate, "CHF"
+  end
+
+  # A scheduled entry with no rate within the limit of today is left out of
+  # look-ahead totals, so its currency is named.
+  test "currencies_without_exchange_rate names a scheduled entry with no recent rate" do
+    family = families(:empty)
+    usd = family.accounts.create!(name: "USD", balance: 1_000, currency: "USD", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: family.currency, date: 2.years.ago.to_date, rate: 1.1)
+    create_transaction(account: usd, currency: "CHF", amount: 50, date: Date.current + 30)
+
+    assert_includes family.currencies_without_exchange_rate, "CHF"
+  end
+
+  test "currencies_without_exchange_rate ignores an excluded transaction" do
+    family = families(:empty)
+    chf = family.accounts.create!(name: "CHF", balance: 1_000, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: family.currency, date: Date.current, rate: 1.1)
+    create_transaction(account: chf, currency: "CHF", amount: 50, date: 2.years.ago.to_date).update!(excluded: true)
+
+    assert_not_includes family.currencies_without_exchange_rate, "CHF"
+  end
+
+  # Both notes are true here: the 2024 transaction is left out, and today's
+  # balance converts at the 30-day-old rate.
+  test "a currency can be in both the missing and the stale note" do
+    family = families(:empty)
+    chf = family.accounts.create!(name: "CHF", balance: 1_000, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: family.currency, date: 30.days.ago.to_date, rate: 1.1)
+    create_transaction(account: chf, currency: "CHF", amount: 50, date: 2.years.ago.to_date)
+
+    assert_equal %w[CHF], family.currencies_without_exchange_rate
+    assert_equal({ "CHF" => 30.days.ago.to_date }, family.stale_exchange_rate_dates)
   end
 
   test "a disabled account's currency is not named" do

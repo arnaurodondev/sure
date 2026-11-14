@@ -118,6 +118,48 @@ class ExchangeRateTest < ActiveSupport::TestCase
     assert_equal 0.0068, ExchangeRate.rates_for(%w[JPY], to: "USD", date: 30.days.ago.to_date)["JPY"].to_f
   end
 
+  # Beyond FALLBACK_MAX_AGE_DAYS rate_sql has no rate, on either side of the
+  # day. rates_for, which converts today's balances, is not bounded.
+  test "rate_sql leaves out a rate beyond the fallback limit" do
+    limit = ExchangeRate::FALLBACK_MAX_AGE_DAYS
+    ExchangeRate.where(from_currency: "CHF", to_currency: "USD").delete_all
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: 1000.days.ago.to_date, rate: 3.0)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.current, rate: 1.1)
+
+    rate_on = ->(on) {
+      sql = ExchangeRate.rate_sql(from: "'CHF'", to: "'USD'", on: "CAST(:on AS date)")
+      ActiveRecord::Base.connection.select_value(ActiveRecord::Base.sanitize_sql_array([ "SELECT #{sql}", { on: on } ]))&.to_d
+    }
+
+    assert_nil rate_on.call(500.days.ago.to_date)
+    assert_equal BigDecimal("3.0"), rate_on.call(1000.days.ago.to_date + limit)
+    assert_equal BigDecimal("1.1"), rate_on.call(Date.current - limit)
+    assert_nil rate_on.call(Date.current - limit - 1)
+
+    unbounded = ExchangeRate.rate_sql(from: "'CHF'", to: "'USD'", on: "CAST(:on AS date)", bounded: false)
+    assert_equal BigDecimal("3.0"), ActiveRecord::Base.connection.select_value(
+      ActiveRecord::Base.sanitize_sql_array([ "SELECT #{unbounded}", { on: 500.days.ago.to_date } ])
+    ).to_d
+  end
+
+  # No rate can be stored for a future day yet, so for one the limit is
+  # measured from today: a scheduled entry converts at the latest rate while
+  # that rate is within the limit of today.
+  test "rate_sql measures the fallback limit for a future day from today" do
+    limit = ExchangeRate::FALLBACK_MAX_AGE_DAYS
+    ExchangeRate.where(from_currency: %w[CHF SEK], to_currency: "USD").delete_all
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.current - limit, rate: 1.1)
+    ExchangeRate.create!(from_currency: "SEK", to_currency: "USD", date: Date.current - limit - 1, rate: 0.09)
+
+    rate_on = ->(from, on) {
+      sql = ExchangeRate.rate_sql(from: "'#{from}'", to: "'USD'", on: "CAST(:on AS date)")
+      ActiveRecord::Base.connection.select_value(ActiveRecord::Base.sanitize_sql_array([ "SELECT #{sql}", { on: on } ]))&.to_d
+    }
+
+    assert_equal BigDecimal("1.1"), rate_on.call("CHF", Date.current + 365)
+    assert_nil rate_on.call("SEK", Date.current + 365)
+  end
+
   test "rate_sql is 1 for the same currency, the latest earlier rate, else the earliest later, else NULL" do
     ExchangeRate.create!(from_currency: "JPY", to_currency: "USD", date: 10.days.ago.to_date, rate: 0.0068)
     ExchangeRate.create!(from_currency: "JPY", to_currency: "USD", date: 5.days.ago.to_date, rate: 0.0069)

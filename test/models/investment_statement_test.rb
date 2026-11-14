@@ -460,6 +460,42 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     assert_in_delta 5.0, trend.percent, 0.1
   end
 
+  # Period return converts balances, as portfolio value and the net worth
+  # chart do, so ExchangeRate::FALLBACK_MAX_AGE_DAYS does not apply: an account
+  # whose newest rate is 120 days old is counted, as portfolio value counts it.
+  test "period_return_trend counts an account whose newest rate is older than the fallback limit" do
+    ExchangeRate.stubs(:provider).returns(nil)
+    account = create_investment_account(balance: 10_500, currency: "CHF")
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: 120.days.ago.to_date, rate: 1.1)
+    period = Period.custom(start_date: Date.current - 10, end_date: Date.current)
+    account.balances.create!(date: period.date_range.begin - 1, balance: 10_000, currency: "CHF",
+                             start_non_cash_balance: 10_000, net_market_flows: 0)
+    account.balances.create!(date: period.date_range.begin, balance: 10_500, currency: "CHF",
+                             start_non_cash_balance: 10_000, net_market_flows: 500)
+
+    assert_in_delta 11_550, @statement.portfolio_value, 1
+    trend = @statement.period_return_trend(period: period)
+    assert_not_nil trend
+    assert_in_delta 550, trend.value.amount, 1
+  end
+
+  # Nor is it cut off part-way through a period: with a rate 100 days old, the
+  # start value and every day's return in a 20-day period convert at it.
+  test "period_return_trend is not cut off part-way through a period by the fallback limit" do
+    ExchangeRate.stubs(:provider).returns(nil)
+    account = create_investment_account(balance: 10_200, currency: "CHF")
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.current - 100, rate: 1.1)
+    period = Period.custom(start_date: Date.current - 20, end_date: Date.current)
+    account.balances.create!(date: Date.current - 21, balance: 10_000, currency: "CHF",
+                             start_non_cash_balance: 10_000, net_market_flows: 0)
+    account.balances.create!(date: Date.current - 20, balance: 10_100, currency: "CHF",
+                             start_non_cash_balance: 10_000, net_market_flows: 100)
+    account.balances.create!(date: Date.current - 5, balance: 10_200, currency: "CHF",
+                             start_non_cash_balance: 10_100, net_market_flows: 100)
+
+    assert_in_delta 220, @statement.period_return_trend(period: period).value.amount, 1
+  end
+
   test "totals skips cache when there are no investment accounts" do
     Rails.cache.expects(:fetch).never
 

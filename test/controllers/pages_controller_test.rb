@@ -1019,7 +1019,7 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
     get root_path
     assert_response :ok
 
-    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from KRW to USD is stored yet, so some totals may leave out amounts in KRW/
+    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from KRW to USD is stored for some or all dates, so some totals may leave out amounts in KRW/
   end
 
   test "dashboard does not name the currency of an account the member cannot see" do

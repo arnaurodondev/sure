@@ -2273,7 +2273,7 @@ end
     get transactions_path
     assert_response :ok
 
-    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from KRW to USD is stored yet, so some totals may leave out amounts in KRW/
+    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from KRW to USD is stored for some or all dates, so some totals may leave out amounts in KRW/
   end
 
   test "index with attachment_status=with lists only transactions that have a file" do

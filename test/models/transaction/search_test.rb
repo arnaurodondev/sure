@@ -535,6 +535,19 @@ class Transaction::SearchTest < ActiveSupport::TestCase
     assert_equal Money.new(97.5, "USD"), after - before, "the KRW expense at its new rate"
   end
 
+  # Look-ahead totals count scheduled entries. No rate can be stored for their
+  # date yet, so the fallback limit is measured from today.
+  test "look-ahead totals convert a scheduled entry beyond the fallback limit at today's rate" do
+    chf = @family.accounts.create!(name: "Zurich", balance: 0, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.current, rate: 1.1)
+    create_transaction(account: chf, amount: 100, currency: "CHF", category: categories(:food_and_drink), kind: "standard",
+                       date: Date.current + ExchangeRate::FALLBACK_MAX_AGE_DAYS + 30)
+
+    totals = Transaction::Search.new(@family, filters: { start_date: Date.current.to_s, end_date: (Date.current + 150).to_s }).totals
+
+    assert_equal Money.new(110, "USD"), totals.expense_money
+  end
+
   test "totals is served from cache when nothing has changed" do
     cache = ActiveSupport::Cache::MemoryStore.new
     Rails.stubs(:cache).returns(cache)

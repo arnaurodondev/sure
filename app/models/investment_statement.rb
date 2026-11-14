@@ -252,6 +252,9 @@ class InvestmentStatement
     )
   end
 
+  # Balances are converted unbounded (ExchangeRate.rate_sql bounded: false),
+  # as portfolio value and the net worth chart convert them, so an account
+  # whose currency stopped being quoted is not dropped from the return.
   def period_return_trend(period: Period.current_month)
     currency = family.currency
     account_ids = investment_account_ids
@@ -260,7 +263,7 @@ class InvestmentStatement
     absolute_return = ActiveRecord::Base.connection.select_value(
       ActiveRecord::Base.sanitize_sql_array([
         <<~SQL.squish,
-          SELECT COALESCE(SUM(b.net_market_flows * #{ExchangeRate.rate_sql(from: "b.currency", to: ":currency", on: "b.date")}), 0)
+          SELECT COALESCE(SUM(b.net_market_flows * #{ExchangeRate.rate_sql(from: "b.currency", to: ":currency", on: "b.date", bounded: false)}), 0)
           FROM balances b
           JOIN accounts a ON a.id = b.account_id
           WHERE a.id IN (:account_ids)
@@ -287,7 +290,7 @@ class InvestmentStatement
     start_value = ActiveRecord::Base.connection.select_value(
       ActiveRecord::Base.sanitize_sql_array([
         <<~SQL.squish,
-          SELECT COALESCE(SUM(b.end_balance * #{ExchangeRate.rate_sql(from: "b.currency", to: ":currency", on: ":period_start")}), 0)
+          SELECT COALESCE(SUM(b.end_balance * #{ExchangeRate.rate_sql(from: "b.currency", to: ":currency", on: ":period_start", bounded: false)}), 0)
           FROM accounts a
           INNER JOIN balances b ON b.account_id = a.id
           INNER JOIN (

@@ -2,6 +2,7 @@ require "test_helper"
 
 class BalanceSheetTest < ActiveSupport::TestCase
   include BalanceTestHelper
+  include EntriesTestHelper
 
   setup do
     @family = families(:empty)
@@ -53,6 +54,49 @@ class BalanceSheetTest < ActiveSupport::TestCase
     create_account(balance: 1_000_000, currency: "JPY", accountable: Depository.new)
 
     assert_equal 57000, BalanceSheet.new(@family).net_worth
+  end
+
+  # Today's balances are not bounded by ExchangeRate::FALLBACK_MAX_AGE_DAYS: a
+  # rate 120 days old still converts them, with the stale note.
+  test "an account converts at a stored rate older than the fallback limit" do
+    ExchangeRate.stubs(:provider).returns(nil)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: 120.days.ago.to_date, rate: 1.1)
+    create_account(balance: 1_000, accountable: Depository.new)
+    create_account(balance: 1_000, currency: "CHF", accountable: Depository.new)
+
+    assert_equal 2_100, BalanceSheet.new(@family).net_worth
+    assert_equal({ "CHF" => 120.days.ago.to_date }, @family.stale_exchange_rate_dates)
+  end
+
+  # The provider stopped quoting CHF 120 days ago and the account is still in
+  # use: net worth converts at the old rate, so the stale note must name it
+  # even though the missing note names CHF for the recent transaction.
+  test "the stale note names a currency net worth converts at an old rate while the missing note names it too" do
+    ExchangeRate.stubs(:provider).returns(nil)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: 120.days.ago.to_date, rate: 1.1)
+    create_account(balance: 1_000, accountable: Depository.new)
+    chf = create_account(balance: 1_000, currency: "CHF", accountable: Depository.new)
+    create_transaction(account: chf, currency: "CHF", amount: 50, date: Date.current - 2)
+
+    assert_equal 2_100, BalanceSheet.new(@family).net_worth
+    assert_includes @family.currencies_without_exchange_rate, "CHF"
+    assert_equal({ "CHF" => 120.days.ago.to_date }, @family.stale_exchange_rate_dates)
+  end
+
+  test "net worth agrees with the chart's latest point when the newest rate is older than the fallback limit" do
+    ExchangeRate.stubs(:provider).returns(nil)
+    period = Period.custom(start_date: Date.current - 1.day, end_date: Date.current)
+    usd = create_account(balance: 1_000, accountable: Depository.new)
+    chf = create_account(balance: 1_000, currency: "CHF", accountable: Depository.new)
+    [ usd, chf ].each do |account|
+      create_balance(account: account, date: period.start_date, balance: 1_000)
+      create_balance(account: account, date: period.end_date, balance: 1_000)
+    end
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: 120.days.ago.to_date, rate: 1.1)
+
+    sheet = BalanceSheet.new(@family)
+    latest = sheet.net_worth_series(period: period).values.index_by(&:date).fetch(period.end_date).value.amount
+    assert_equal latest, sheet.net_worth
   end
 
   test "disabled accounts do not affect totals" do

@@ -216,7 +216,7 @@ class ReportsControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/\$250,0\d\d\.\d\d/, response.body, "the yen gain is in a total, converted at parity")
     assert_no_match(/\$1,020,000\.00/, response.body, "the yen account is in Portfolio Value, converted at parity")
     assert_select "[data-testid='unconverted-gains-note']", text: /1 gain is not included/
-    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from JPY to USD is stored yet, so some totals may leave out amounts in JPY/
+    assert_select "[data-testid='missing-exchange-rates']", text: /No exchange rate from JPY to USD is stored for some or all dates, so some totals may leave out amounts in JPY/
   end
 
   # Each holding's line under the card is the same arithmetic as the card's
@@ -879,6 +879,23 @@ class ReportsControllerTest < ActionDispatch::IntegrationTest
     row = css_select("tr[data-category='category-#{category.id}']").first
     assert row, "the converted expense is listed"
     assert_match(/\$67\.00/, row.text)
+  end
+
+  # A custom period may end in the future, and then the export lists
+  # scheduled entries. No rate can be stored for their date yet, so the
+  # fallback limit is measured from today: one at today's rate is listed.
+  test "the export lists a scheduled entry beyond the fallback limit at today's rate" do
+    category = @family.categories.create!(name: "Franc Future Rent", color: "#111111")
+    chf = @family.accounts.create!(owner: @user, name: "Zurich", balance: 0, currency: "CHF", accountable: Depository.new)
+    ExchangeRate.create!(from_currency: "CHF", to_currency: "USD", date: Date.current, rate: 1.1)
+    create_transaction(account: chf, name: "FutureRent", amount: 1_000, currency: "CHF", category: category,
+                       date: Date.current + ExchangeRate::FALLBACK_MAX_AGE_DAYS + 30)
+
+    get export_transactions_reports_path(format: :csv, period_type: :custom,
+                                         start_date: Date.current, end_date: Date.current + 150)
+    assert_response :ok
+
+    assert_match(/Franc Future Rent/, @response.body)
   end
 
   test "monthly period navigation shows previous month link" do

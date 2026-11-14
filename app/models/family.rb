@@ -750,7 +750,9 @@ class Family < ApplicationRecord
   end
 
   # Currencies the family's accounts, entries or holdings use that have no
-  # stored exchange rate into the family currency on any date. Totals built on
+  # stored exchange rate into the family currency on any date, or a
+  # transaction or trade with none near enough to its date for
+  # ExchangeRate.rate_sql (see ExchangeRate::FALLBACK_MAX_AGE_DAYS). Totals built on
   # #rate_sql leave amounts in them out rather than counting them at 1;
   # totals built on #rates_for include them only if the provider supplies a
   # rate, which is then stored. The pages that show those totals say so.
@@ -759,14 +761,20 @@ class Family < ApplicationRecord
   # visible accounts count, and a member is not told about the currency of an
   # account shared with someone else.
   def currencies_without_exchange_rate(accounts: self.accounts)
-    ExchangeRate.currencies_without_rate(currencies_in_use(accounts), to: currency)
+    visible_ids = self.accounts.visible.where(id: accounts.select(:id)).select(:id)
+    (
+      ExchangeRate.currencies_without_rate(currencies_in_use(accounts), to: currency) +
+        ExchangeRate.entry_currencies_without_rate(Entry.where(account_id: visible_ids), to: currency)
+    ).uniq
   end
 
   # Currencies today's totals convert whose newest rate into the family
   # currency is too old to count as today's, mapped to that rate's date. Today's
   # totals use it, and the same pages say so. Only balances and current holdings
   # count: a currency only old entries use is converted at its own date's rate,
-  # so an old newest rate is not out of date for it.
+  # so an old newest rate is not out of date for it. A currency can be named
+  # here and in the missing note: today's balance converts at the old rate,
+  # while an entry with no rate near its date is left out.
   def stale_exchange_rate_dates(accounts: self.accounts)
     ExchangeRate.stale_rate_dates(currencies_held_now(accounts), to: currency)
   end
