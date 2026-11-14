@@ -116,6 +116,22 @@ class SnaptradeItem < ApplicationRecord
     )
   end
 
+  # Switch the item to a SnapTrade Personal API key. Any OAuth token or legacy
+  # user is cleared, so the key is what signs requests from now on.
+  def apply_personal_key!(client_id:, consumer_key:)
+    update!(
+      client_id: client_id,
+      consumer_key: consumer_key,
+      oauth_access_token: nil,
+      oauth_refresh_token: nil,
+      oauth_token_expires_at: nil,
+      oauth_token_type: PERSONAL_KEY_TOKEN_TYPE,
+      snaptrade_user_id: nil,
+      snaptrade_user_secret: nil,
+      status: :good
+    )
+  end
+
   def has_completed_initial_setup?
     # Setup is complete if we have any linked accounts
     accounts.any?

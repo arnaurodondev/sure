@@ -384,18 +384,7 @@ class SnaptradeItemsController < ApplicationController
       return render_provider_panel("snaptrade", alert: t(".missing_fields"))
     end
 
-    # Any stale OAuth token or legacy user goes, so the key is what signs requests.
-    snaptrade_item.update!(
-      client_id: client_id,
-      consumer_key: consumer_key,
-      oauth_access_token: nil,
-      oauth_refresh_token: nil,
-      oauth_token_expires_at: nil,
-      oauth_token_type: SnaptradeItem::PERSONAL_KEY_TOKEN_TYPE,
-      snaptrade_user_id: nil,
-      snaptrade_user_secret: nil,
-      status: :good
-    )
+    snaptrade_item.apply_personal_key!(client_id: client_id, consumer_key: consumer_key)
     snaptrade_item.sync_later_with_follow_up
 
     render_provider_panel("snaptrade", notice: t(".success"))

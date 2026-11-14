@@ -53,6 +53,21 @@ class SnaptradeItemTest < ActiveSupport::TestCase
     assert_instance_of Provider::Snaptrade, item.snaptrade_provider
   end
 
+  test "apply_personal_key! replaces OAuth tokens and the legacy user with the key" do
+    item = snaptrade_items(:configured_item)
+    item.update!(snaptrade_user_id: "legacy-user", snaptrade_user_secret: "legacy-secret", status: :requires_update)
+
+    item.apply_personal_key!(client_id: "personal-client", consumer_key: "personal-key")
+    item.reload
+
+    assert item.personal_key_configured?
+    assert_not item.oauth_configured?
+    assert_equal [ "personal-client", "personal-key", nil, nil, nil, nil, "good" ],
+                 [ item.client_id, item.consumer_key, item.oauth_refresh_token, item.oauth_token_expires_at,
+                   item.snaptrade_user_id, item.snaptrade_user_secret, item.status ]
+    assert_includes SnaptradeItem.syncable, item
+  end
+
   # Pre-OAuth items that stored keys but never registered a user (or whose
   # re-registration failed) have keys and no user secret, like a Personal key.
   test "a pre-OAuth item that never registered a user is not a Personal API key" do
