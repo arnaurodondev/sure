@@ -406,17 +406,23 @@ class Provider::Snaptrade
     path = "/api/v1/accounts/#{account_id}/activities"
 
     first_response = nil
+    previous_first = nil
     activities = []
 
     MAX_ACTIVITY_PAGES.times do |page|
       response = get_json(path, params.merge(offset: activities.size))
       unless response.is_a?(Hash) && response["data"].is_a?(Array)
         return response if first_response.nil?
-        break # an unexpected later page: keep the pages already fetched
+        # Saving a partial history would move the sync cursor past the missing pages.
+        raise ApiError.new("SnapTrade activities page at offset #{activities.size} was not a paged response")
       end
 
       first_response ||= response
       rows = response["data"]
+      # A server that ignores offset returns the same page again: stop instead of looping to the cap.
+      break if previous_first && rows.first == previous_first
+
+      previous_first = rows.first
       activities.concat(rows)
 
       total = response.dig("pagination", "total")

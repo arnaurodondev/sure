@@ -259,7 +259,7 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
     assert_equal 1, requests.size
   end
 
-  test "get_account_activities keeps earlier pages when a later page is not a paged body" do
+  test "get_account_activities raises when a later page is not a paged body" do
     configure_oauth!
     provider = Provider::Snaptrade.new(fake_item)
 
@@ -268,7 +268,18 @@ class Provider::SnaptradeOauthTest < ActiveSupport::TestCase
       [ { "id" => "b0" } ]
     ])
 
+    assert_raises(Provider::Snaptrade::ApiError) { provider.get_account_activities(account_id: "acct-1") }
+  end
+
+  test "get_account_activities stops when the server repeats a page" do
+    configure_oauth!
+    provider = Provider::Snaptrade.new(fake_item)
+
+    page = { data: Array.new(1000) { |i| { "id" => "a#{i}" } } }
+    requests = stub_activity_pages(provider, [ page, page ])
+
     assert_equal 1000, provider.get_account_activities(account_id: "acct-1")["data"].size
+    assert_equal 2, requests.size
   end
 
   test "get_account_activities without a total pages until an empty page" do
