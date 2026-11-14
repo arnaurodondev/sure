@@ -334,6 +334,46 @@ class IbkrAccountProcessorTest < ActiveSupport::TestCase
     assert_nil @account.entries.find_by(external_id: "ibkr_cash_7001")
   end
 
+  # A skipped row with an amount is cash the account lost track of, so support
+  # needs to see it; one entry per run, not one per row.
+  test "skipped cash transaction types with an amount are captured for support" do
+    set_cash_transactions(
+      cash_row("7101", "Price Adjustments", "-1.00"),
+      cash_row("7102", "Price Adjustments", "-2.00"),
+      cash_row("7103", "Advisor Fees", "-3.00"),
+      cash_row("7104", "Something Else", "0")
+    )
+
+    assert_difference -> { DebugLogEntry.where(provider_key: "ibkr").count }, 1 do
+      IbkrAccount::Processor.new(@ibkr_account).process
+    end
+
+    entry = DebugLogEntry.where(provider_key: "ibkr").last
+    assert_equal "warn", entry.level
+    assert_equal @family, entry.family
+    assert_equal @ibkr_account.account_provider, entry.account_provider
+    assert_equal({ "Price Adjustments" => 2, "Advisor Fees" => 1 }, entry.metadata["skipped_cash_transaction_types"])
+  end
+
+  # Tax withheld from a bond coupon carries the bond's conid, but it reduces
+  # the coupon's interest, not dividends.
+  test "withholding tax on a bond coupon reduces interest" do
+    set_cash_transactions(
+      cash_row("6201", "Bond Interest Received", "3.00", conid: "9001"),
+      cash_row("6202", "Withholding Tax", "-0.30", conid: "9001"),
+      cash_row("6203", "Withholding Tax", "-0.10", conid: "9002", asset_category: "BOND")
+    )
+
+    IbkrAccount::Processor.new(@ibkr_account).process
+
+    assert_equal "Interest", @account.entries.find_by(external_id: "ibkr_cash_6202").entryable.investment_activity_label
+    assert_equal "Interest", @account.entries.find_by(external_id: "ibkr_cash_6203").entryable.investment_activity_label
+
+    totals = InvestmentStatement::Totals.new(@family, account_ids: [ @account.id ], date_range: Date.current..Date.current).call
+    assert_equal BigDecimal("0"), totals[:dividends]
+    assert_equal BigDecimal("2.60"), totals[:interest]
+  end
+
   test "processor computes weighted provider cost basis for grouped lots" do
     @ibkr_account.update!(
       raw_holdings_payload: [
@@ -466,7 +506,7 @@ class IbkrAccountProcessorTest < ActiveSupport::TestCase
 
   private
 
-    def cash_row(transaction_id, type, amount, conid: nil)
+    def cash_row(transaction_id, type, amount, conid: nil, asset_category: nil)
       {
         "transaction_id" => transaction_id,
         "type" => type,
@@ -474,7 +514,8 @@ class IbkrAccountProcessorTest < ActiveSupport::TestCase
         "currency" => "USD",
         "fx_rate_to_base" => "1",
         "report_date" => Date.current.to_s,
-        "conid" => conid
+        "conid" => conid,
+        "asset_category" => asset_category
       }.compact
     end
 

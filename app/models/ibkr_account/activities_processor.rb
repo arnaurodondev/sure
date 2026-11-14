@@ -37,7 +37,10 @@ class IbkrAccount::ActivitiesProcessor
     trades_count = trade_results.count { |r| r[:imported] }
     fee_count    = trade_results.sum   { |r| r[:fees] }
 
-    cash_count = cash_transactions.sum { |t| process_cash_transaction(t.with_indifferent_access) ? 1 : 0 }
+    @cash_transactions = cash_transactions.map(&:with_indifferent_access)
+    @skipped_cash_types = Hash.new(0)
+    cash_count = @cash_transactions.sum { |t| process_cash_transaction(t) ? 1 : 0 }
+    capture_skipped_cash_types
 
     { trades: trades_count, transactions: cash_count + fee_count }
   end
@@ -247,7 +250,8 @@ class IbkrAccount::ActivitiesProcessor
     def supported_cash_transaction?(row)
       type = row[:type].to_s.upcase.strip
       unless SUPPORTED_CASH_TRANSACTION_TYPES.include?(type)
-        Rails.logger.info("IbkrAccount::ActivitiesProcessor - Skipping unsupported cash transaction type '#{row[:type]}'")
+        amount = parse_decimal(row[:amount])
+        @skipped_cash_types[row[:type].to_s.strip] += 1 if amount.present? && !amount.zero?
         return false
       end
       return false unless row[:transaction_id].present? && row[:amount].present? && row[:currency].present? && row[:report_date].present?
@@ -269,12 +273,39 @@ class IbkrAccount::ActivitiesProcessor
       end
     end
 
-    # Tax withheld on a security's dividend reduces that dividend; without a
-    # conid it was withheld on credit interest, and reduces the interest.
+    # Tax withheld on a security's dividend reduces that dividend. Without a
+    # conid it was withheld on credit interest, and on a bond it was withheld
+    # from the coupon; both reduce the interest.
     def cash_transaction_label(row, type)
-      return "Interest" if type == "WITHHOLDING TAX" && row[:conid].blank?
+      return "Interest" if type == "WITHHOLDING TAX" && (row[:conid].blank? || bond_withholding?(row))
 
       CASH_TRANSACTION_LABELS[type]
+    end
+
+    # The row's asset category says so when the query includes it; otherwise a
+    # bond interest row for the same conid in the statement does.
+    def bond_withholding?(row)
+      return true if row[:asset_category].to_s.upcase.strip == "BOND"
+
+      @cash_transactions.any? do |other|
+        other[:conid].to_s == row[:conid].to_s && other[:type].to_s.upcase.strip.start_with?("BOND INTEREST")
+      end
+    end
+
+    # A skipped row with an amount is cash the account no longer accounts for.
+    def capture_skipped_cash_types
+      return if @skipped_cash_types.empty?
+
+      DebugLogEntry.capture(
+        category: "provider_sync",
+        level: "warn",
+        message: "Skipped IBKR cash transactions of unsupported types",
+        source: self.class.name,
+        provider_key: "ibkr",
+        account_provider: @ibkr_account.account_provider,
+        family: @ibkr_account.ibkr_item&.family,
+        metadata: { ibkr_account_id: @ibkr_account.id, skipped_cash_transaction_types: @skipped_cash_types }
+      )
     end
 
     def build_cash_transaction_name(row, label, security = nil)
